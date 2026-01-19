@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
-import type { AnalysisResult } from '../types';
+import type { UnifiedChromatographyResult, SingleComponentAnalysisResult, SingleComponentAnalysis, UnifiedChromatography, Reference } from '../types';
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -76,114 +76,118 @@ const singleComponentSchema = {
     required: ["componentId", "basicProfile", "physicochemical", "structureAnalysis", "toxicology"]
 };
 
-const responseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    unifiedChromatography: {
-        type: Type.OBJECT,
-        properties: {
-            summary: { type: Type.STRING, description: "能够分离所有组分的色谱策略的总体摘要。" },
-            technique: { type: Type.OBJECT, properties: { recommendation: { type: Type.STRING }, justification: { type: Type.STRING } }, required: ["recommendation", "justification"] },
-            stationaryPhase: { type: Type.OBJECT, properties: { recommendation: { type: Type.STRING } }, required: ["recommendation"] },
-            mobilePhase: { type: Type.OBJECT, properties: { pumpA: { type: Type.STRING }, pumpB: { type: Type.STRING }, phRange: { type: Type.STRING }, gradient: { type: Type.STRING, description: "推荐的梯度洗脱程序，例如 '从10% B开始，在20分钟内线性增加到90% B'。" } }, required: ["pumpA", "pumpB", "phRange", "gradient"] },
-            detector: { type: Type.OBJECT, properties: { recommendation: { type: Type.STRING }, settings: { type: Type.STRING } }, required: ["recommendation", "settings"] }
-        },
-        required: ["summary", "technique", "stationaryPhase", "mobilePhase", "detector"]
+const unifiedChromatographySchema = {
+    type: Type.OBJECT,
+    properties: {
+        summary: { type: Type.STRING, description: "能够分离所有组分的色谱策略的总体摘要。" },
+        technique: { type: Type.OBJECT, properties: { recommendation: { type: Type.STRING }, justification: { type: Type.STRING } }, required: ["recommendation", "justification"] },
+        stationaryPhase: { type: Type.OBJECT, properties: { recommendation: { type: Type.STRING } }, required: ["recommendation"] },
+        mobilePhase: { type: Type.OBJECT, properties: { pumpA: { type: Type.STRING }, pumpB: { type: Type.STRING }, phRange: { type: Type.STRING }, gradient: { type: Type.STRING, description: "推荐的梯度洗脱程序，例如 '从10% B开始，在20分钟内线性增加到90% B'。" } }, required: ["pumpA", "pumpB", "phRange", "gradient"] },
+        detector: { type: Type.OBJECT, properties: { recommendation: { type: Type.STRING }, settings: { type: Type.STRING } }, required: ["recommendation", "settings"] }
     },
-    components: {
-        type: Type.ARRAY,
-        items: singleComponentSchema
-    }
-  },
-  required: ["unifiedChromatography", "components"]
+    required: ["summary", "technique", "stationaryPhase", "mobilePhase", "detector"]
 };
 
-const systemInstruction = `你是一个世界级的“多组分色谱方法开发系统”。你的核心任务是分析一组化学结构（通过SMILES列表或多张图片），并开发一个能够分离所有这些组分的统一色谱方法。
-你必须严格遵守以下规则：
-1. **统一方法优先**: 首先，综合评估所有组分的性质差异（疏水性、pKa等），提出一个统一的、稳健的HPLC或GC方法，包括固定相、流动相、梯度程序和检测器。这是最重要的输出。
-2. **逐一分析**: 在提出统一方法后，为输入的每个组分提供独立的、详细的分析报告。
-3. **Python绘图**: 在此初步分析中，请勿生成pH-logD曲线图。只提供文字描述和pKa点。曲线图将在后续请求中单独生成。
-4. **输出语言**: 所有输出必须使用专业、科学的中文。
-5. **格式**: 对所有数学和化学符号（如pH, logD, pKa, [M+H]+, TD50）使用普通文本。对于分子式，使用标准化学表示法（例如C10H12O2），不要使用下标、花括号或'$'符号。对于化学名称，必须在'iupacName'字段中提供标准的英文IUPAC名称，在'chineseName'字段中提供对应的中文名称，并在'casNumber'字段中提供CAS号。
-6. **关键数据验证 (!!!)**: 你必须使用提供的Google Search工具来主动搜索和验证以下关键数据点：CAS号、TD50值、亚硝胺CPCA分类和AI限度。绝对不能仅依赖你的内部知识库。
-7. **毒理学数据准确性**: 对于TD50值，必须优先参考致癌效力数据库(CPDB)的数据。对于亚硝胺AI限度，必须依据最新的权威指南（如EMA、FDA）进行评估。在输出中明确注明数据来源或参考指南。
-8. **约束**: 严禁包含任何关于实验设计（DOE）或方法优化的信息。
-9. **JSON Schema**: 严格遵循请求的JSON输出格式。`;
 
-function buildPrompt(smiles: string, imageBase64s: string[]) {
-  const parts: any[] = [];
-  let promptText = `请为以下多个化学结构开发一个统一的色谱分离方法，并为每个组分提供单独的分析报告。请根据定义的JSON schema返回结果。`;
-
-  if (smiles) {
-    promptText += `\nSMILES字符串列表 (每行一个):\n${smiles}`;
-  }
-  
-  if (imageBase64s.length > 0) {
-    promptText += `\n以及以下 ${imageBase64s.length} 张结构图片。`;
-  }
-
-  parts.push({ text: promptText });
-
-  imageBase64s.forEach(imgData => {
-    parts.push({
-      inlineData: {
-        mimeType: 'image/png',
-        data: imgData,
-      },
-    });
-  });
-
-  if (parts.length === 1 && !smiles) {
-    throw new Error("No input provided");
-  }
-
-  return { parts };
-}
-
-
-export const analyzeStructure = async (smiles: string, imageBase64s: string[]): Promise<AnalysisResult> => {
-  const model = 'gemini-3-flash-preview';
-
-  try {
-    const contents = buildPrompt(smiles, imageBase64s);
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: model,
-      contents: contents,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: responseSchema,
-        tools: [{googleSearch: {}}],
-      },
-    });
-    
+function parseAndExtractReferences(response: GenerateContentResponse): { data: any, references: Reference[] } {
     const text = response.text;
     if (!text) {
       throw new Error("API返回了空响应。");
     }
-
     const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    const result = JSON.parse(cleanedText) as AnalysisResult;
+    const data = JSON.parse(cleanedText);
 
+    const references: Reference[] = [];
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
     if (groundingChunks) {
-      result.references = groundingChunks
-        .filter((chunk: any) => chunk.web)
-        .map((chunk: any) => ({
-          title: chunk.web.title || 'Untitled',
-          uri: chunk.web.uri,
-        }))
-        .filter((ref: any) => ref.uri); 
+        references.push(...groundingChunks
+            .filter((chunk: any) => chunk.web)
+            .map((chunk: any) => ({
+              title: chunk.web.title || 'Untitled',
+              uri: chunk.web.uri,
+            }))
+            .filter((ref: any) => ref.uri)
+        );
+    }
+    return { data, references };
+}
+
+export const getUnifiedChromatography = async (smiles: string, imageBase64s: string[]): Promise<UnifiedChromatographyResult> => {
+    const model = 'gemini-3-flash-preview';
+    const parts: any[] = [];
+    let promptText = `请为以下多个化学结构开发一个统一的色谱分离方法。仅返回统一色谱方法部分。`;
+
+    if (smiles) promptText += `\nSMILES字符串列表:\n${smiles}`;
+    if (imageBase64s.length > 0) promptText += `\n以及 ${imageBase64s.length} 张结构图片。`;
+    parts.push({ text: promptText });
+    imageBase64s.forEach(imgData => parts.push({ inlineData: { mimeType: 'image/png', data: imgData } }));
+
+    try {
+        const response = await ai.models.generateContent({
+            model,
+            contents: { parts },
+            config: {
+                systemInstruction: `你是一个世界级的色谱方法开发专家。你的任务是综合评估所有输入的化学结构，并提出一个统一的、稳健的HPLC或GC方法。严格遵循请求的JSON schema。`,
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: { unifiedChromatography: unifiedChromatographySchema },
+                    required: ["unifiedChromatography"]
+                },
+                tools: [{googleSearch: {}}],
+            },
+        });
+        const { data, references } = parseAndExtractReferences(response);
+        return { unifiedChromatography: data.unifiedChromatography as UnifiedChromatography, references };
+    } catch (error) {
+        console.error("Gemini API call for unified chromatography failed:", error);
+        throw new Error("无法获取统一色谱方法。");
+    }
+};
+
+export const getSingleComponentAnalysis = async (input: { smiles?: string; imageBase64?: string }, componentId: string): Promise<SingleComponentAnalysisResult> => {
+    const model = 'gemini-3-flash-preview';
+    const parts: any[] = [];
+    let promptText = `请为ID为 '${componentId}' 的以下化学结构提供详细的分析报告。`;
+
+    if (input.smiles) {
+        promptText += `\nSMILES: ${input.smiles}`;
+    }
+    parts.push({ text: promptText });
+    if (input.imageBase64) {
+        parts.push({ inlineData: { mimeType: 'image/png', data: input.imageBase64 } });
     }
     
-    return result;
-
-  } catch (error) {
-    console.error("Gemini API call failed:", error);
-    throw new Error("无法从Gemini API获取有效分析结果。请检查输入是否有效或API密钥配置。");
-  }
+    try {
+        const response = await ai.models.generateContent({
+            model,
+            contents: { parts },
+            config: {
+                systemInstruction: `你是一个世界级的化学分析专家。你的任务是为一个化学结构提供详细的、独立的分析报告。
+                你必须严格遵守以下规则：
+                1. **Python绘图**: 请勿生成pH-logD曲线图。只提供文字描述和pKa点。
+                2. **输出语言**: 所有输出必须使用专业、科学的中文。
+                3. **格式**: 对化学符号使用普通文本。对于化学名称，必须提供英文IUPAC名、中文名和CAS号。
+                4. **关键数据验证 (!!!)**: 你必须使用提供的Google Search工具来主动搜索和验证以下关键数据点：CAS号、TD50值、亚硝胺CPCA分类和AI限度。绝对不能仅依赖你的内部知识库。
+                5. **毒理学数据准确性**: 对于TD50值，必须优先参考致癌效力数据库(CPDB)的数据。对于亚硝胺AI限度，必须依据最新的权威指南（如EMA、FDA）进行评估。
+                6. **JSON Schema**: 严格遵循请求的JSON输出格式，将 '${componentId}' 作为componentId字段的值。`,
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: { component: singleComponentSchema },
+                    required: ["component"]
+                },
+                tools: [{googleSearch: {}}],
+            },
+        });
+        const { data, references } = parseAndExtractReferences(response);
+        return { component: data.component as SingleComponentAnalysis, references };
+    } catch (error) {
+        console.error(`Analysis failed for ${componentId}:`, error);
+        throw new Error(`组分 ${componentId} 的分析失败。`);
+    }
 };
+
 
 export const generateCurveForStructure = async (input: { smiles?: string; imageBase64?: string }): Promise<string> => {
     const model = 'gemini-3-flash-preview';

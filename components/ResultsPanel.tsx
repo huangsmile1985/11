@@ -115,13 +115,59 @@ const ComponentDetails: React.FC<{
     );
 };
 
+const ComponentWrapper: React.FC<{
+    componentData: AnalysisResult['components'][0];
+    index: number;
+    onGenerateCurve: (index: number) => void;
+    curveLoadingStatus: Record<number, boolean>;
+}> = ({ componentData, index, onGenerateCurve, curveLoadingStatus }) => {
+    if ('status' in componentData) {
+        if (componentData.status === 'loading') {
+            return (
+                <div className="space-y-6 p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800">
+                    <h3 className="text-xl font-bold text-slate-500 dark:text-slate-400 flex items-center">
+                        <LoadingIcon className="animate-spin mr-3 h-5 w-5" />
+                        正在分析: {componentData.componentId}
+                    </h3>
+                </div>
+            );
+        }
+        if (componentData.status === 'error') {
+            return (
+                <div className="space-y-4 p-4 border border-red-200 dark:border-red-700 rounded-lg bg-red-50 dark:bg-red-900/20">
+                    <h3 className="text-xl font-bold text-red-600 dark:text-red-400 flex items-center">
+                        <ErrorIcon className="mr-3 h-5 w-5" />
+                        分析失败: {componentData.componentId}
+                    </h3>
+                    <p className="text-sm text-red-700 dark:text-red-300">{componentData.message}</p>
+                </div>
+            );
+        }
+    }
+
+    return (
+        <div className="space-y-6 p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800">
+            <h3 className="text-xl font-bold text-cyan-600 dark:text-cyan-400">
+                {(componentData as SingleComponentAnalysis).componentId} 详细分析
+            </h3>
+            <ComponentDetails
+                component={componentData as SingleComponentAnalysis}
+                index={index}
+                onGenerateCurve={onGenerateCurve}
+                curveLoadingStatus={curveLoadingStatus}
+            />
+        </div>
+    );
+};
+
+
 export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, error, onGenerateCurve, curveLoadingStatus }) => {
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full min-h-[400px] bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
         <LoadingIcon className="w-16 h-16 text-cyan-500 animate-spin" />
-        <p className="mt-4 text-lg font-medium text-slate-600 dark:text-slate-300">正在生成深度分析报告...</p>
-        <p className="text-sm text-slate-500 dark:text-slate-400">此过程涉及多项复杂计算，请耐心等待。</p>
+        <p className="mt-4 text-lg font-medium text-slate-600 dark:text-slate-300">正在获取核心色谱方法...</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">请稍候，马上为您呈现初步结果。</p>
       </div>
     );
   }
@@ -148,7 +194,9 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
   
   const { unifiedChromatography, components, references } = result;
 
-  const referencesCard = references && references.length > 0 && (
+  const allComponentsLoaded = components.every(c => !('status' in c) || c.status !== 'loading');
+
+  const referencesCard = references && references.length > 0 && allComponentsLoaded && (
     <ResultCard title="数据来源与参考">
         <ul className="list-disc space-y-2 pl-5">
             {references.map((ref, i) => (
@@ -170,21 +218,14 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
     </ResultCard>
   );
 
-  // Single component view
-  if (components.length === 1) {
-    const component = components[0];
-    return (
-        <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">
-                分析报告: {component.basicProfile.iupacName || component.componentId} {component.basicProfile.chineseName ? `(${component.basicProfile.chineseName})` : ''}
-            </h2>
-            <ComponentDetails 
-              component={component} 
-              index={0} 
-              onGenerateCurve={onGenerateCurve} 
-              curveLoadingStatus={curveLoadingStatus}
-            />
-            <ResultCard title="色谱开发建议">
+  return (
+    <div className="space-y-8">
+        {unifiedChromatography ? (
+            <ResultCard title="统一色谱分离方法建议">
+                <div className="space-y-2 mb-4">
+                    <h4 className="font-semibold text-slate-700 dark:text-slate-300">策略概述</h4>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">{unifiedChromatography.summary}</p>
+                </div>
                 {renderTable({
                     '推荐技术': `${unifiedChromatography.technique.recommendation} (${unifiedChromatography.technique.justification})`,
                     '固定相选择': unifiedChromatography.stationaryPhase.recommendation,
@@ -196,42 +237,22 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
                     '检测器参数': unifiedChromatography.detector.settings,
                 })}
             </ResultCard>
-            {referencesCard}
-      </div>
-    );
-  }
-
-  // Multi-component view
-  return (
-    <div className="space-y-8">
-        <ResultCard title="统一色谱分离方法建议">
-            <div className="space-y-2 mb-4">
-                <h4 className="font-semibold text-slate-700 dark:text-slate-300">策略概述</h4>
-                <p className="text-sm text-slate-600 dark:text-slate-400">{unifiedChromatography.summary}</p>
+        ) : (
+            <div className="flex flex-col items-center justify-center h-full min-h-[200px] bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
+                <LoadingIcon className="w-12 h-12 text-cyan-500 animate-spin" />
+                <p className="mt-4 text-md font-medium text-slate-600 dark:text-slate-300">正在生成统一色谱方法...</p>
             </div>
-            {renderTable({
-                '推荐技术': `${unifiedChromatography.technique.recommendation} (${unifiedChromatography.technique.justification})`,
-                '固定相选择': unifiedChromatography.stationaryPhase.recommendation,
-                '流动相 (A泵)': unifiedChromatography.mobilePhase.pumpA,
-                '流动相 (B泵)': unifiedChromatography.mobilePhase.pumpB,
-                '流动相 pH 范围': unifiedChromatography.mobilePhase.phRange,
-                '推荐梯度': unifiedChromatography.mobilePhase.gradient,
-                '检测器选择': unifiedChromatography.detector.recommendation,
-                '检测器参数': unifiedChromatography.detector.settings,
-            })}
-        </ResultCard>
+        )}
       
         <div className="space-y-8">
-            {components.map((component, index) => (
-                <div key={index} className="space-y-6 p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800">
-                    <h3 className="text-xl font-bold text-cyan-600 dark:text-cyan-400">{component.componentId} 详细分析</h3>
-                    <ComponentDetails 
-                      component={component} 
-                      index={index}
-                      onGenerateCurve={onGenerateCurve} 
-                      curveLoadingStatus={curveLoadingStatus} 
-                    />
-                </div>
+            {components.map((componentData, index) => (
+                <ComponentWrapper 
+                    key={index}
+                    componentData={componentData}
+                    index={index}
+                    onGenerateCurve={onGenerateCurve}
+                    curveLoadingStatus={curveLoadingStatus}
+                />
             ))}
         </div>
         {referencesCard}

@@ -63,7 +63,6 @@ export interface UnifiedChromatography {
     };
     mobilePhase: {
       pumpA: string;
-      // FIX: Removed duplicate 'pumpB' property.
       pumpB: string;
       phRange: string;
       gradient: string; // Recommended gradient profile
@@ -74,11 +73,23 @@ export interface UnifiedChromatography {
     };
 }
 
-export interface AnalysisResult {
-  unifiedChromatography: UnifiedChromatography;
-  components: SingleComponentAnalysis[];
-  references?: Array<{
+export interface Reference {
     title: string;
     uri: string;
-  }>;
+}
+
+export interface UnifiedChromatographyResult {
+    unifiedChromatography: UnifiedChromatography;
+    references?: Reference[];
+}
+
+export interface SingleComponentAnalysisResult {
+    component: SingleComponentAnalysis;
+    references?: Reference[];
+}
+
+export interface AnalysisResult {
+  unifiedChromatography: UnifiedChromatography | null;
+  components: (SingleComponentAnalysis | { status: 'loading'; componentId: string } | { status: 'error'; componentId: string; message: string })[];
+  references: Reference[];
 }
