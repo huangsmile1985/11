@@ -8,6 +8,8 @@ interface ResultsPanelProps {
   result: AnalysisResult | null;
   isLoading: boolean;
   error: string | null;
+  onGenerateCurve: (index: number) => void;
+  curveLoadingStatus: Record<number, boolean>;
 }
 
 const renderTable = (data: Record<string, string | number | boolean>) => (
@@ -25,13 +27,21 @@ const renderTable = (data: Record<string, string | number | boolean>) => (
   </div>
 );
 
-const ComponentDetails: React.FC<{ component: SingleComponentAnalysis }> = ({ component }) => {
+const ComponentDetails: React.FC<{
+  component: SingleComponentAnalysis;
+  index: number;
+  onGenerateCurve: (index: number) => void;
+  curveLoadingStatus: Record<number, boolean>;
+}> = ({ component, index, onGenerateCurve, curveLoadingStatus }) => {
     const { basicProfile, physicochemical, structureAnalysis, toxicology } = component;
+    const isCurveLoading = !!curveLoadingStatus[index];
+
     return (
         <>
             <ResultCard title="基本档案">
                 {renderTable({
                     'IUPAC 名称': basicProfile.iupacName,
+                    '中文名称': basicProfile.chineseName,
                     '分子式': basicProfile.formula,
                     '精确分子量': basicProfile.molecularWeight,
                 })}
@@ -47,7 +57,22 @@ const ComponentDetails: React.FC<{ component: SingleComponentAnalysis }> = ({ co
                                 className="w-full h-auto rounded-md"
                             />
                         </div>
-                    ) : <p className="text-sm text-slate-500">无法生成曲线图。</p>}
+                    ) : (
+                        <div className="text-center p-4 border border-dashed rounded-lg bg-slate-50 dark:bg-slate-700/50">
+                            <button
+                                onClick={() => onGenerateCurve(index)}
+                                disabled={isCurveLoading}
+                                className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-transform transform active:scale-95"
+                            >
+                                {isCurveLoading ? (
+                                    <><LoadingIcon className="animate-spin -ml-1 mr-2 h-4 w-4" /> 生成中...</>
+                                ) : (
+                                    '生成pH-LogD曲线图'
+                                )}
+                            </button>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">按需生成以加快初始分析速度</p>
+                        </div>
+                    )}
                     <p className="text-sm text-slate-600 dark:text-slate-400">{physicochemical.phLogD.trendDescription}</p>
                     {renderTable({
                         'pKa 点': physicochemical.phLogD.pkaPoints,
@@ -76,9 +101,7 @@ const ComponentDetails: React.FC<{ component: SingleComponentAnalysis }> = ({ co
                 {renderTable({
                     'ICH M7 警示结构': toxicology.ichM7.alerts,
                     'ICH M7 分类建议': toxicology.ichM7.classification,
-                    // FIX: Corrected typo from `tdso` to `td50`.
                     'TD50': toxicology.td50.value,
-                    // FIX: Corrected typo from `tdso` to `td50`.
                     'AI (每日允许摄入量)': toxicology.td50.ai,
                     '是否为亚硝胺': toxicology.nitrosamine.isNitrosamine ? '是' : '否',
                     'CPCA 分类': toxicology.nitrosamine.cpcaClass,
@@ -89,7 +112,7 @@ const ComponentDetails: React.FC<{ component: SingleComponentAnalysis }> = ({ co
     );
 };
 
-export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, error }) => {
+export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, error, onGenerateCurve, curveLoadingStatus }) => {
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full min-h-[400px] bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
@@ -128,9 +151,14 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
     return (
         <div className="space-y-6">
             <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">
-                分析报告: {component.basicProfile.iupacName || component.componentId}
+                分析报告: {component.basicProfile.iupacName || component.componentId} {component.basicProfile.chineseName ? `(${component.basicProfile.chineseName})` : ''}
             </h2>
-            <ComponentDetails component={component} />
+            <ComponentDetails 
+              component={component} 
+              index={0} 
+              onGenerateCurve={onGenerateCurve} 
+              curveLoadingStatus={curveLoadingStatus}
+            />
             <ResultCard title="色谱开发建议">
                 {renderTable({
                     '推荐技术': `${unifiedChromatography.technique.recommendation} (${unifiedChromatography.technique.justification})`,
@@ -171,7 +199,12 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
             {components.map((component, index) => (
                 <div key={index} className="space-y-6 p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800">
                     <h3 className="text-xl font-bold text-cyan-600 dark:text-cyan-400">{component.componentId} 详细分析</h3>
-                    <ComponentDetails component={component} />
+                    <ComponentDetails 
+                      component={component} 
+                      index={index}
+                      onGenerateCurve={onGenerateCurve} 
+                      curveLoadingStatus={curveLoadingStatus} 
+                    />
                 </div>
             ))}
         </div>

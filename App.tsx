@@ -4,7 +4,7 @@ import type { AnalysisResult } from './types';
 import { InputPanel } from './components/InputPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { Header } from './components/Header';
-import { analyzeStructure } from './services/geminiService';
+import { analyzeStructure, generateCurveForStructure } from './services/geminiService';
 
 const App: React.FC = () => {
   const [smilesInput, setSmilesInput] = useState<string>('');
@@ -12,6 +12,7 @@ const App: React.FC = () => {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [curveLoadingStatus, setCurveLoadingStatus] = useState<Record<number, boolean>>({});
 
   const handleAnalyze = useCallback(async () => {
     if (!smilesInput && imageFiles.length === 0) {
@@ -22,6 +23,7 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setAnalysisResult(null);
+    setCurveLoadingStatus({});
 
     try {
       const imageBase64s: string[] = await Promise.all(
@@ -43,12 +45,62 @@ const App: React.FC = () => {
     }
   }, [smilesInput, imageFiles]);
 
+  const handleGenerateCurve = useCallback(async (componentIndex: number) => {
+    if (!analysisResult) return;
+
+    setCurveLoadingStatus(prev => ({ ...prev, [componentIndex]: true }));
+    setError(null);
+
+    try {
+        const smilesLines = smilesInput.split('\n').filter(s => s.trim() !== '');
+        const numSmiles = smilesLines.length;
+        
+        let curveInput: { smiles?: string; imageBase64?: string } = {};
+
+        if (componentIndex < numSmiles) {
+            curveInput.smiles = smilesLines[componentIndex];
+        } else {
+            const imageIndex = componentIndex - numSmiles;
+            if (imageFiles[imageIndex]) {
+                const imageBase64 = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+                    reader.onerror = (error) => reject(error);
+                    reader.readAsDataURL(imageFiles[imageIndex]);
+                });
+                curveInput.imageBase64 = imageBase64;
+            } else {
+                 throw new Error(`Image file for component index ${componentIndex} not found.`);
+            }
+        }
+        
+        const imageData = await generateCurveForStructure(curveInput);
+
+        setAnalysisResult(prevResult => {
+            if (!prevResult) return null;
+            const newComponents = [...prevResult.components];
+            if (newComponents[componentIndex]?.physicochemical?.phLogD) {
+                 newComponents[componentIndex].physicochemical.phLogD.phLogDCurveImage = imageData;
+            }
+            return { ...prevResult, components: newComponents };
+        });
+
+    } catch (err) {
+        console.error(err);
+        setError(err instanceof Error ? err.message : '生成曲线图时发生错误。');
+    } finally {
+        setCurveLoadingStatus(prev => ({ ...prev, [componentIndex]: false }));
+    }
+  }, [analysisResult, smilesInput, imageFiles]);
+
+
   const handleClear = () => {
     setSmilesInput('');
     setImageFiles([]);
     setAnalysisResult(null);
     setError(null);
     setIsLoading(false);
+    setCurveLoadingStatus({});
   };
 
   return (
@@ -72,6 +124,8 @@ const App: React.FC = () => {
               result={analysisResult}
               isLoading={isLoading}
               error={error}
+              onGenerateCurve={handleGenerateCurve}
+              curveLoadingStatus={curveLoadingStatus}
             />
           </div>
         </div>

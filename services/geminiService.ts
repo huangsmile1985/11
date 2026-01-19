@@ -17,9 +17,10 @@ const singleComponentSchema = {
           properties: {
             formula: { type: Type.STRING, description: "分子式" },
             molecularWeight: { type: Type.NUMBER, description: "精确分子量" },
-            iupacName: { type: Type.STRING, description: "IUPAC名称，必须同时包含英文和中文，格式为 'English Name (中文名)'。" },
+            iupacName: { type: Type.STRING, description: "标准的英文IUPAC名称。" },
+            chineseName: { type: Type.STRING, description: "对应的中文化学名称。" },
           },
-          required: ["formula", "molecularWeight", "iupacName"]
+          required: ["formula", "molecularWeight", "iupacName", "chineseName"]
         },
         physicochemical: {
           type: Type.OBJECT,
@@ -28,10 +29,9 @@ const singleComponentSchema = {
               type: Type.OBJECT,
               properties: {
                 trendDescription: { type: Type.STRING, description: "对pH-logD曲线的文字解读，解释疏水性变化。" },
-                phLogDCurveImage: { type: Type.STRING, description: "pH 1.0-14.0范围内的log D曲线的Base64编码PNG图像。必须使用Python matplotlib生成此图，并在图上标出pKa点。" },
                 pkaPoints: { type: Type.STRING, description: "识别出的pKa值。" }
               },
-              required: ["trendDescription", "phLogDCurveImage", "pkaPoints"]
+              required: ["trendDescription", "pkaPoints"]
             },
             nmr: { type: Type.OBJECT, properties: { prediction: { type: Type.STRING } }, required: ["prediction"] },
             ms: { type: Type.OBJECT, properties: { prediction: { type: Type.STRING } }, required: ["prediction"] }
@@ -100,10 +100,10 @@ const responseSchema = {
 const systemInstruction = `你是一个世界级的“多组分色谱方法开发系统”。你的核心任务是分析一组化学结构（通过SMILES列表或多张图片），并开发一个能够分离所有这些组分的统一色谱方法。
 你必须严格遵守以下规则：
 1. **统一方法优先**: 首先，综合评估所有组分的性质差异（疏水性、pKa等），提出一个统一的、稳健的HPLC或GC方法，包括固定相、流动相、梯度程序和检测器。这是最重要的输出。
-2. **逐一分析**: 在提出统一方法后，为输入的每个组分提供独立的、详细的分析报告。每个报告都必须包含其独立的pH-logD曲线图。
-3. **Python绘图**: 必须为每个组分调用Python解释器和matplotlib库来绘制其pH 1.0 - 14.0范围内的log D曲线。图必须清晰，并在曲线上标记出pKa点。将生成的图作为Base64编码的PNG字符串在JSON中返回。
+2. **逐一分析**: 在提出统一方法后，为输入的每个组分提供独立的、详细的分析报告。
+3. **Python绘图**: 在此初步分析中，请勿生成pH-logD曲线图。只提供文字描述和pKa点。曲线图将在后续请求中单独生成。
 4. **输出语言**: 所有输出必须使用专业、科学的中文。
-5. **格式**: 对所有数学和化学符号（如pH, logD, pKa, [M+H]+, TD50）使用普通文本。对于分子式，使用标准化学表示法（例如C10H12O2），不要使用下标、花括号或'$'符号。对于IUPAC名称，必须同时提供英文和中文，格式为 'English Name (中文名)'，例如 'Aspirin (阿司匹林)'。
+5. **格式**: 对所有数学和化学符号（如pH, logD, pKa, [M+H]+, TD50）使用普通文本。对于分子式，使用标准化学表示法（例如C10H12O2），不要使用下标、花括号或'$'符号。对于化学名称，必须在'iupacName'字段中提供标准的英文IUPAC名称，并在'chineseName'字段中提供对应的中文名称。
 6. **约束**: 严禁包含任何关于实验设计（DOE）或方法优化的信息。
 7. **JSON Schema**: 严格遵循请求的JSON输出格式。`;
 
@@ -168,3 +168,56 @@ export const analyzeStructure = async (smiles: string, imageBase64s: string[]): 
     throw new Error("无法从Gemini API获取有效分析结果。请检查输入是否有效或API密钥配置。");
   }
 };
+
+export const generateCurveForStructure = async (input: { smiles?: string; imageBase64?: string }): Promise<string> => {
+    const model = 'gemini-3-flash-preview';
+  
+    const prompt = `使用Python matplotlib为以下化学结构生成pH 1.0 - 14.0范围内的log D曲线图。在图上标出pKa点。将生成的图作为Base64编码的PNG字符串在JSON中返回。`;
+    const parts: any[] = [{ text: prompt }];
+  
+    if (input.smiles) {
+      parts.push({ text: `SMILES: ${input.smiles}` });
+    } else if (input.imageBase64) {
+      parts.push({
+        inlineData: {
+          mimeType: 'image/png',
+          data: input.imageBase64,
+        },
+      });
+    } else {
+      throw new Error("Either SMILES or imageBase64 must be provided.");
+    }
+  
+    const curveSchema = {
+      type: Type.OBJECT,
+      properties: {
+        phLogDCurveImage: {
+          type: Type.STRING,
+          description: "pH 1.0-14.0范围内的log D曲线的Base64编码PNG图像。"
+        }
+      },
+      required: ["phLogDCurveImage"]
+    };
+  
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: { parts },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: curveSchema,
+        },
+      });
+  
+      const text = response.text;
+      if (!text) {
+        throw new Error("API returned an empty response for the curve generation.");
+      }
+      const result = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+      return result.phLogDCurveImage;
+  
+    } catch (error) {
+      console.error("Gemini API call for curve generation failed:", error);
+      throw new Error("无法生成pH-LogD曲线图。");
+    }
+  };

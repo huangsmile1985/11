@@ -4,12 +4,13 @@ export interface SingleComponentAnalysis {
   basicProfile: {
     formula: string;
     molecularWeight: number;
-    iupacName: string;
+    iupacName: string; // English IUPAC Name
+    chineseName: string; // Chinese Name
   };
   physicochemical: {
     phLogD: {
       trendDescription: string;
-      phLogDCurveImage: string; // Base64 encoded image
+      phLogDCurveImage?: string; // Base64 encoded image, now optional
       pkaPoints: string;
     };
     nmr: {
