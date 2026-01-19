@@ -42,6 +42,7 @@ const ComponentDetails: React.FC<{
                 {renderTable({
                     'IUPAC 名称': basicProfile.iupacName,
                     '中文名称': basicProfile.chineseName,
+                    'CAS 号': basicProfile.casNumber,
                     '分子式': basicProfile.formula,
                     '精确分子量': basicProfile.molecularWeight,
                 })}
@@ -102,10 +103,12 @@ const ComponentDetails: React.FC<{
                     'ICH M7 警示结构': toxicology.ichM7.alerts,
                     'ICH M7 分类建议': toxicology.ichM7.classification,
                     'TD50': toxicology.td50.value,
+                    'TD50 数据来源': toxicology.td50.source,
                     'AI (每日允许摄入量)': toxicology.td50.ai,
                     '是否为亚硝胺': toxicology.nitrosamine.isNitrosamine ? '是' : '否',
                     'CPCA 分类': toxicology.nitrosamine.cpcaClass,
                     '亚硝胺 AI 限度': toxicology.nitrosamine.aiLimit,
+                    '限度参考指南': toxicology.nitrosamine.guidelineReference,
                 })}
             </ResultCard>
         </>
@@ -143,7 +146,29 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
     );
   }
   
-  const { unifiedChromatography, components } = result;
+  const { unifiedChromatography, components, references } = result;
+
+  const referencesCard = references && references.length > 0 && (
+    <ResultCard title="数据来源与参考">
+        <ul className="list-disc space-y-2 pl-5">
+            {references.map((ref, i) => (
+                <li key={i} className="text-sm">
+                    <a 
+                        href={ref.uri} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="text-cyan-600 dark:text-cyan-400 hover:underline break-all"
+                    >
+                        {ref.title || ref.uri}
+                    </a>
+                </li>
+            ))}
+        </ul>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
+            以上链接由AI模型在生成报告时引用，请自行核实其准确性。
+        </p>
+    </ResultCard>
+  );
 
   // Single component view
   if (components.length === 1) {
@@ -171,6 +196,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
                     '检测器参数': unifiedChromatography.detector.settings,
                 })}
             </ResultCard>
+            {referencesCard}
       </div>
     );
   }
@@ -208,6 +234,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ result, isLoading, e
                 </div>
             ))}
         </div>
+        {referencesCard}
     </div>
   );
 };

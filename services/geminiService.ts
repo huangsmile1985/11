@@ -19,8 +19,9 @@ const singleComponentSchema = {
             molecularWeight: { type: Type.NUMBER, description: "精确分子量" },
             iupacName: { type: Type.STRING, description: "标准的英文IUPAC名称。" },
             chineseName: { type: Type.STRING, description: "对应的中文化学名称。" },
+            casNumber: { type: Type.STRING, description: "化学文摘社（CAS）注册号。" },
           },
-          required: ["formula", "molecularWeight", "iupacName", "chineseName"]
+          required: ["formula", "molecularWeight", "iupacName", "chineseName", "casNumber"]
         },
         physicochemical: {
           type: Type.OBJECT,
@@ -66,8 +67,8 @@ const singleComponentSchema = {
             type: Type.OBJECT,
             properties: {
                 ichM7: { type: Type.OBJECT, properties: { alerts: { type: Type.STRING }, classification: { type: Type.STRING } }, required: ["alerts", "classification"] },
-                td50: { type: Type.OBJECT, properties: { value: { type: Type.STRING }, ai: { type: Type.STRING } }, required: ["value", "ai"] },
-                nitrosamine: { type: Type.OBJECT, properties: { isNitrosamine: { type: Type.BOOLEAN }, cpcaClass: { type: Type.STRING }, aiLimit: { type: Type.STRING } }, required: ["isNitrosamine", "cpcaClass", "aiLimit"] }
+                td50: { type: Type.OBJECT, properties: { value: { type: Type.STRING }, source: { type: Type.STRING, description: "TD50值的数据来源，例如'CPDB (致癌效力数据库)'。" }, ai: { type: Type.STRING } }, required: ["value", "source", "ai"] },
+                nitrosamine: { type: Type.OBJECT, properties: { isNitrosamine: { type: Type.BOOLEAN }, cpcaClass: { type: Type.STRING }, aiLimit: { type: Type.STRING }, guidelineReference: { type: Type.STRING, description: "亚硝胺AI限度的参考指南，例如 'EMA/CHMP/SWP/44272/2019' 或 'FDA 指南'。" } }, required: ["isNitrosamine", "cpcaClass", "aiLimit", "guidelineReference"] }
             },
             required: ["ichM7", "td50", "nitrosamine"]
         }
@@ -103,9 +104,11 @@ const systemInstruction = `你是一个世界级的“多组分色谱方法开�
 2. **逐一分析**: 在提出统一方法后，为输入的每个组分提供独立的、详细的分析报告。
 3. **Python绘图**: 在此初步分析中，请勿生成pH-logD曲线图。只提供文字描述和pKa点。曲线图将在后续请求中单独生成。
 4. **输出语言**: 所有输出必须使用专业、科学的中文。
-5. **格式**: 对所有数学和化学符号（如pH, logD, pKa, [M+H]+, TD50）使用普通文本。对于分子式，使用标准化学表示法（例如C10H12O2），不要使用下标、花括号或'$'符号。对于化学名称，必须在'iupacName'字段中提供标准的英文IUPAC名称，并在'chineseName'字段中提供对应的中文名称。
-6. **约束**: 严禁包含任何关于实验设计（DOE）或方法优化的信息。
-7. **JSON Schema**: 严格遵循请求的JSON输出格式。`;
+5. **格式**: 对所有数学和化学符号（如pH, logD, pKa, [M+H]+, TD50）使用普通文本。对于分子式，使用标准化学表示法（例如C10H12O2），不要使用下标、花括号或'$'符号。对于化学名称，必须在'iupacName'字段中提供标准的英文IUPAC名称，在'chineseName'字段中提供对应的中文名称，并在'casNumber'字段中提供CAS号。
+6. **关键数据验证 (!!!)**: 你必须使用提供的Google Search工具来主动搜索和验证以下关键数据点：CAS号、TD50值、亚硝胺CPCA分类和AI限度。绝对不能仅依赖你的内部知识库。
+7. **毒理学数据准确性**: 对于TD50值，必须优先参考致癌效力数据库(CPDB)的数据。对于亚硝胺AI限度，必须依据最新的权威指南（如EMA、FDA）进行评估。在输出中明确注明数据来源或参考指南。
+8. **约束**: 严禁包含任何关于实验设计（DOE）或方法优化的信息。
+9. **JSON Schema**: 严格遵循请求的JSON输出格式。`;
 
 function buildPrompt(smiles: string, imageBase64s: string[]) {
   const parts: any[] = [];
@@ -151,6 +154,7 @@ export const analyzeStructure = async (smiles: string, imageBase64s: string[]): 
         systemInstruction: systemInstruction,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
+        tools: [{googleSearch: {}}],
       },
     });
     
@@ -160,8 +164,20 @@ export const analyzeStructure = async (smiles: string, imageBase64s: string[]): 
     }
 
     const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const result = JSON.parse(cleanedText) as AnalysisResult;
+
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (groundingChunks) {
+      result.references = groundingChunks
+        .filter((chunk: any) => chunk.web)
+        .map((chunk: any) => ({
+          title: chunk.web.title || 'Untitled',
+          uri: chunk.web.uri,
+        }))
+        .filter((ref: any) => ref.uri); 
+    }
     
-    return JSON.parse(cleanedText) as AnalysisResult;
+    return result;
 
   } catch (error) {
     console.error("Gemini API call failed:", error);

@@ -6,6 +6,7 @@ export interface SingleComponentAnalysis {
     molecularWeight: number;
     iupacName: string; // English IUPAC Name
     chineseName: string; // Chinese Name
+    casNumber: string; // CAS Registry Number
   };
   physicochemical: {
     phLogD: {
@@ -39,12 +40,14 @@ export interface SingleComponentAnalysis {
     };
     td50: {
       value: string;
+      source: string; // Data source, e.g., "CPDB (Carcinogenic Potency Database)"
       ai: string;
     };
     nitrosamine: {
       isNitrosamine: boolean;
       cpcaClass: string;
       aiLimit: string;
+      guidelineReference: string; // Guideline reference, e.g., "EMA/CHMP/SWP/44272/2019"
     };
   };
 }
@@ -60,6 +63,7 @@ export interface UnifiedChromatography {
     };
     mobilePhase: {
       pumpA: string;
+      // FIX: Removed duplicate 'pumpB' property.
       pumpB: string;
       phRange: string;
       gradient: string; // Recommended gradient profile
@@ -73,4 +77,8 @@ export interface UnifiedChromatography {
 export interface AnalysisResult {
   unifiedChromatography: UnifiedChromatography;
   components: SingleComponentAnalysis[];
+  references?: Array<{
+    title: string;
+    uri: string;
+  }>;
 }
