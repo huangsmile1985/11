@@ -17,11 +17,16 @@ const App: React.FC = () => {
   const [curveLoadingStatus, setCurveLoadingStatus] = useState<Record<number, boolean>>({});
   
   useEffect(() => {
-    const savedApiKey = localStorage.getItem('gemini_api_key');
-    if (savedApiKey) {
-      setApiKey(savedApiKey);
-    }
-  }, []);
+  // 优先读取 Vercel/Vite 环境变量，如果没有再看本地存储
+  const envApiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const savedApiKey = localStorage.getItem('gemini_api_key');
+  
+  if (envApiKey) {
+    setApiKey(envApiKey);
+  } else if (savedApiKey) {
+    setApiKey(savedApiKey);
+  }
+}, []);
 
   const handleApiKeySave = (newApiKey: string) => {
     setApiKey(newApiKey);
