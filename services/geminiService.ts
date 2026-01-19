@@ -2,12 +2,6 @@
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import type { UnifiedChromatographyResult, SingleComponentAnalysisResult, SingleComponentAnalysis, UnifiedChromatography, Reference } from '../types';
 
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const singleComponentSchema = {
     type: Type.OBJECT,
     properties: {
@@ -112,7 +106,10 @@ function parseAndExtractReferences(response: GenerateContentResponse): { data: a
     return { data, references };
 }
 
-export const getUnifiedChromatography = async (smiles: string, imageBase64s: string[]): Promise<UnifiedChromatographyResult> => {
+export const getUnifiedChromatography = async (apiKey: string, smiles: string, imageBase64s: string[]): Promise<UnifiedChromatographyResult> => {
+    if (!apiKey) throw new Error("API Key is required.");
+    const ai = new GoogleGenAI({ apiKey });
+    
     const model = 'gemini-3-flash-preview';
     const parts: any[] = [];
     let promptText = `请为以下多个化学结构开发一个统一的色谱分离方法。仅返回统一色谱方法部分。`;
@@ -145,7 +142,10 @@ export const getUnifiedChromatography = async (smiles: string, imageBase64s: str
     }
 };
 
-export const getSingleComponentAnalysis = async (input: { smiles?: string; imageBase64?: string }, componentId: string): Promise<SingleComponentAnalysisResult> => {
+export const getSingleComponentAnalysis = async (apiKey: string, input: { smiles?: string; imageBase64?: string }, componentId: string): Promise<SingleComponentAnalysisResult> => {
+    if (!apiKey) throw new Error("API Key is required.");
+    const ai = new GoogleGenAI({ apiKey });
+
     const model = 'gemini-3-flash-preview';
     const parts: any[] = [];
     let promptText = `请为ID为 '${componentId}' 的以下化学结构提供详细的分析报告。`;
@@ -189,7 +189,10 @@ export const getSingleComponentAnalysis = async (input: { smiles?: string; image
 };
 
 
-export const generateCurveForStructure = async (input: { smiles?: string; imageBase64?: string }): Promise<string> => {
+export const generateCurveForStructure = async (apiKey: string, input: { smiles?: string; imageBase64?: string }): Promise<string> => {
+    if (!apiKey) throw new Error("API Key is required.");
+    const ai = new GoogleGenAI({ apiKey });
+
     const model = 'gemini-3-flash-preview';
   
     const prompt = `使用Python matplotlib为以下化学结构生成pH 1.0 - 14.0范围内的log D曲线图。在图上标出pKa点。将生成的图作为Base64编码的PNG字符串在JSON中返回。`;

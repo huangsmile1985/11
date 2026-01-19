@@ -1,18 +1,32 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { AnalysisResult, SingleComponentAnalysis } from './types';
 import { InputPanel } from './components/InputPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { Header } from './components/Header';
+import { ApiKeyInput } from './components/ApiKeyInput';
 import { getUnifiedChromatography, getSingleComponentAnalysis, generateCurveForStructure } from './services/geminiService';
 
 const App: React.FC = () => {
+  const [apiKey, setApiKey] = useState<string>('');
   const [smilesInput, setSmilesInput] = useState<string>('');
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [curveLoadingStatus, setCurveLoadingStatus] = useState<Record<number, boolean>>({});
+  
+  useEffect(() => {
+    const savedApiKey = localStorage.getItem('gemini_api_key');
+    if (savedApiKey) {
+      setApiKey(savedApiKey);
+    }
+  }, []);
+
+  const handleApiKeySave = (newApiKey: string) => {
+    setApiKey(newApiKey);
+    localStorage.setItem('gemini_api_key', newApiKey);
+  };
 
   const fileToBase64 = (file: File): Promise<string> =>
     new Promise<string>((resolve, reject) => {
@@ -23,6 +37,10 @@ const App: React.FC = () => {
     });
 
   const handleAnalyze = useCallback(async () => {
+    if (!apiKey) {
+      setError('请输入您的Gemini API密钥。');
+      return;
+    }
     if (!smilesInput && imageFiles.length === 0) {
       setError('请输入SMILES字符串或上传结构图片。');
       return;
@@ -47,29 +65,26 @@ const App: React.FC = () => {
     try {
       const imageBase64s = await Promise.all(imageFiles.map(fileToBase64));
       
-      // Step 1: Get Unified Chromatography method first for quick feedback
-      const chromatographyResult = await getUnifiedChromatography(smilesInput, imageBase64s);
+      const chromatographyResult = await getUnifiedChromatography(apiKey, smilesInput, imageBase64s);
       setAnalysisResult(prev => ({
           ...prev!,
           unifiedChromatography: chromatographyResult.unifiedChromatography,
           references: [...(prev?.references || []), ...(chromatographyResult.references || [])],
       }));
 
-      // Step 2: Concurrently analyze each component
       componentInputs.forEach(async (cInput, index) => {
         try {
             const inputPayload = cInput.type === 'smiles' 
                 ? { smiles: cInput.value }
                 : { imageBase64: await fileToBase64(cInput.value as File) };
           
-            const componentResult = await getSingleComponentAnalysis(inputPayload, cInput.id);
+            const componentResult = await getSingleComponentAnalysis(apiKey, inputPayload, cInput.id);
 
             setAnalysisResult(prev => {
                 if (!prev) return null;
                 const newComponents = [...prev.components];
                 newComponents[index] = componentResult.component;
                 const newReferences = [...prev.references, ...(componentResult.references || [])];
-                // Simple deduplication of references
                 const uniqueReferences = Array.from(new Map(newReferences.map(item => [item.uri, item])).values());
                 return { ...prev, components: newComponents, references: uniqueReferences };
             });
@@ -87,17 +102,21 @@ const App: React.FC = () => {
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : '分析过程中发生未知错误。请检查您的输入或API密钥后重试。');
-      setAnalysisResult(null); // Clear partial results on major failure
+      setAnalysisResult(null); 
     } finally {
-      setIsLoading(false); // Main loading is done after dispatching all requests
+      setIsLoading(false);
     }
-  }, [smilesInput, imageFiles]);
+  }, [apiKey, smilesInput, imageFiles]);
 
   const handleGenerateCurve = useCallback(async (componentIndex: number) => {
+    if (!apiKey) {
+      setError('请输入您的Gemini API密钥。');
+      return;
+    }
     if (!analysisResult || !analysisResult.components[componentIndex]) return;
 
     const component = analysisResult.components[componentIndex];
-    if ('status' in component) return; // Don't generate for loading/error states
+    if ('status' in component) return;
 
     setCurveLoadingStatus(prev => ({ ...prev, [componentIndex]: true }));
     setError(null);
@@ -119,7 +138,7 @@ const App: React.FC = () => {
             }
         }
         
-        const imageData = await generateCurveForStructure(curveInput);
+        const imageData = await generateCurveForStructure(apiKey, curveInput);
 
         setAnalysisResult(prevResult => {
             if (!prevResult) return null;
@@ -137,7 +156,7 @@ const App: React.FC = () => {
     } finally {
         setCurveLoadingStatus(prev => ({ ...prev, [componentIndex]: false }));
     }
-  }, [analysisResult, smilesInput, imageFiles]);
+  }, [apiKey, analysisResult, smilesInput, imageFiles]);
 
 
   const handleClear = () => {
@@ -153,28 +172,32 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 font-sans">
       <Header />
       <main className="container mx-auto p-4 md:p-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <div className="lg:col-span-4">
-            <InputPanel
-              smilesInput={smilesInput}
-              setSmilesInput={setSmilesInput}
-              imageFiles={imageFiles}
-              setImageFiles={setImageFiles}
-              onAnalyze={handleAnalyze}
-              onClear={handleClear}
-              isLoading={isLoading}
-            />
+        {!apiKey ? (
+          <ApiKeyInput onSave={handleApiKeySave} />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div className="lg:col-span-4">
+              <InputPanel
+                smilesInput={smilesInput}
+                setSmilesInput={setSmilesInput}
+                imageFiles={imageFiles}
+                setImageFiles={setImageFiles}
+                onAnalyze={handleAnalyze}
+                onClear={handleClear}
+                isLoading={isLoading}
+              />
+            </div>
+            <div className="lg:col-span-8">
+              <ResultsPanel
+                result={analysisResult}
+                isLoading={isLoading && !analysisResult?.unifiedChromatography}
+                error={error}
+                onGenerateCurve={handleGenerateCurve}
+                curveLoadingStatus={curveLoadingStatus}
+              />
+            </div>
           </div>
-          <div className="lg:col-span-8">
-            <ResultsPanel
-              result={analysisResult}
-              isLoading={isLoading && !analysisResult?.unifiedChromatography} // Show main loader only before first result
-              error={error}
-              onGenerateCurve={handleGenerateCurve}
-              curveLoadingStatus={curveLoadingStatus}
-            />
-          </div>
-        </div>
+        )}
       </main>
     </div>
   );
