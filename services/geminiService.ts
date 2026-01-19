@@ -1,42 +1,49 @@
-import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { UnifiedChromatographyResult, SingleComponentAnalysisResult, SingleComponentAnalysis, UnifiedChromatography, Reference } from '../types';
 
-// ... (此处省略 schema 定义部分，与原代码一致) ...
+// 辅助函数：解析响应并提取参考资料
+function parseAndExtractReferences(response: any): { data: any, references: Reference[] } {
+    const text = response.text();
+    if (!text) {
+        throw new Error("API返回了空响应。");
+    }
+    const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const data = JSON.parse(cleanedText);
+
+    const references: Reference[] = [];
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (groundingChunks) {
+        references.push(...groundingChunks
+            .filter((chunk: any) => chunk.web)
+            .map((chunk: any) => ({
+                title: chunk.web.title || 'Untitled',
+                uri: chunk.web.uri,
+            }))
+            .filter((ref: any) => ref.uri)
+        );
+    }
+    return { data, references };
+}
 
 // 1. 获取统一色谱方法
 export const getUnifiedChromatography = async (apiKey: string, smiles: string, imageBase64s: string[]): Promise<UnifiedChromatographyResult> => {
     if (!apiKey) throw new Error("API Key is required.");
-    const ai = new GoogleGenAI({ apiKey });
-    
-    // 已修复：修改为稳定版模型名称
-    const model = 'gemini-1.5-flash'; 
-    const parts: any[] = [];
-    let promptText = `请为以下多个化学结构开发一个统一的色谱分离方法。仅返回统一色谱方法部分。`;
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
+    });
 
-    if (smiles) promptText += `\nSMILES字符串列表:\n${smiles}`;
-    if (imageBase64s.length > 0) promptText += `\n以及 ${imageBase64s.length} 张结构图片。`;
-    parts.push({ text: promptText });
-    imageBase64s.forEach(imgData => parts.push({ inlineData: { mimeType: 'image/png', data: imgData } }));
+    let promptText = `请为以下化学结构开发一个统一的色谱分离方法：\n${smiles}`;
+    const parts = [{ text: promptText }];
+    imageBase64s.forEach(imgData => parts.push({ inlineData: { mimeType: 'image/png', data: imgData } } as any));
 
     try {
-        const response = await ai.models.generateContent({
-            model,
-            contents: { parts },
-            config: {
-                systemInstruction: `你是一个世界级的色谱方法开发专家。你的任务是综合评估所有输入的化学结构，并提出一个统一的、稳健的HPLC或GC方法。严格遵循请求的JSON schema。`,
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: { unifiedChromatography: unifiedChromatographySchema },
-                    required: ["unifiedChromatography"]
-                },
-                tools: [{googleSearch: {}}],
-            },
-        });
-        const { data, references } = parseAndExtractReferences(response);
+        const result = await model.generateContent(parts);
+        const { data, references } = parseAndExtractReferences(result.response);
         return { unifiedChromatography: data.unifiedChromatography as UnifiedChromatography, references };
     } catch (error) {
-        console.error("Gemini API call for unified chromatography failed:", error);
+        console.error("Gemini API error:", error);
         throw new Error("无法获取统一色谱方法。");
     }
 };
@@ -44,37 +51,20 @@ export const getUnifiedChromatography = async (apiKey: string, smiles: string, i
 // 2. 获取单组分分析报告
 export const getSingleComponentAnalysis = async (apiKey: string, input: { smiles?: string; imageBase64?: string }, componentId: string): Promise<SingleComponentAnalysisResult> => {
     if (!apiKey) throw new Error("API Key is required.");
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
+    });
 
-    // 已修复：修改为稳定版模型名称
-    const model = 'gemini-1.5-flash'; 
-    const parts: any[] = [];
-    let promptText = `请为ID为 '${componentId}' 的以下化学结构提供详细的分析报告。`;
-
-    if (input.smiles) {
-        promptText += `\nSMILES: ${input.smiles}`;
-    }
-    parts.push({ text: promptText });
+    const parts = [{ text: `请为ID为 '${componentId}' 的结构提供详细分析报告。SMILES: ${input.smiles || '见图片'}` }];
     if (input.imageBase64) {
-        parts.push({ inlineData: { mimeType: 'image/png', data: input.imageBase64 } });
+        parts.push({ inlineData: { mimeType: 'image/png', data: input.imageBase64 } } as any);
     }
-    
+
     try {
-        const response = await ai.models.generateContent({
-            model,
-            contents: { parts },
-            config: {
-                systemInstruction: `你是一个世界级的化学分析专家。你的任务是为一个化学结构提供详细的、独立的分析报告...`, // 此处省略后续 instruction
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: { component: singleComponentSchema },
-                    required: ["component"]
-                },
-                tools: [{googleSearch: {}}],
-            },
-        });
-        const { data, references } = parseAndExtractReferences(response);
+        const result = await model.generateContent(parts);
+        const { data, references } = parseAndExtractReferences(result.response);
         return { component: data.component as SingleComponentAnalysis, references };
     } catch (error) {
         console.error(`Analysis failed for ${componentId}:`, error);
@@ -85,10 +75,22 @@ export const getSingleComponentAnalysis = async (apiKey: string, input: { smiles
 // 3. 生成 pH-LogD 曲线图
 export const generateCurveForStructure = async (apiKey: string, input: { smiles?: string; imageBase64?: string }): Promise<string> => {
     if (!apiKey) throw new Error("API Key is required.");
-    const ai = new GoogleGenAI({ apiKey });
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // 已修复：修改为稳定版模型名称
-    const model = 'gemini-1.5-flash'; 
-  
-    const prompt = `使用Python matplotlib为以下化学结构生成曲线图...`;
-    // ... (后续逻辑保持不变)
+    const prompt = `使用Python为以下结构生成pH 1.0 - 14.0的log D曲线图，返回Base64编码的PNG。`;
+    const parts = [{ text: prompt }];
+    if (input.smiles) parts.push({ text: `SMILES: ${input.smiles}` });
+    if (input.imageBase64) parts.push({ inlineData: { mimeType: 'image/png', data: input.imageBase64 } } as any);
+
+    try {
+        const result = await model.generateContent(parts);
+        const responseText = result.response.text();
+        const jsonMatch = responseText.match(/\{.*\}/s);
+        const data = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(responseText);
+        return data.phLogDCurveImage;
+    } catch (error) {
+        console.error("Curve generation failed:", error);
+        throw new Error("无法生成曲线图。");
+    }
+};
